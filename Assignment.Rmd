@@ -1,4 +1,171 @@
 ---
+---
+title: Prediction Assignment
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 50
+---
+
+## Human Activity Recognition
+
+This project analyze the data collected from six people about the weight lifting exercise. Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Read more: http:/groupware.les.inf.puc-rio.br/har#ixzz4TkZCoA1h
+
+```{r, echo=FALSE, message = FALSE}
+library(caret) 
+library(randomForest)
+library(ggplot2)
+library(dplyr)
+library(forcats)
+
+set.seed(33833)
+```
+
+Download the data and read it from the csv file. The data is randomly
+divided in training and testing data with a ratio of 3:1, i.e. 25%
+observations in the data is used as the test set. Eventually, the
+validation set is read from a csv file, that includes 20 test cases
+without the classe values. The results show the random forest prediction
+on the validation data.
+
+```{r, echo=FALSE}
+data = read.csv("~/Desktop/Coursera/Practical Machine Learning/Project/pml-training.csv")
+
+validation_data = read.csv("~/Desktop/Coursera/Practical Machine Learning/Project/pml-testing.csv")
+```
+
+## Pre-Process Data
+
+The training and testing is investigated and it is observed that few columns
+contain almost all N/A values, i.e. 19216 out of 19622 observation are missing. 
+Thus, those column/variables are removed from the training, testing and 
+validation data set.
+
+```{r, echo=FALSE}
+na_count <-sapply(data, function(y) sum(length(which(is.na(y))))) 
+na_count <- data.frame(na_count) 
+keep_variables <- colSums(is.na(data)) == 0 
+
+na_count$Variables <- 1:160
+perf <-ggplot(data=na_count, aes(x=Variables, y=na_count))+
+  geom_bar(stat="identity",fill="lightblue")+
+  scale_fill_grey() +labs(y= "Number of N/A values") 
+perf
+```
+
+```{r, echo=FALSE}
+data <- data[ , keep_variables] 
+data$classe <- factor(data$classe)
+
+validation_data <- validation_data[ , keep_variables]
+```
+
+Similar, investigation is performed for validation data set. It is observed that 
+validation data set had another 33 variables with all observations missing, as 
+shown in plot below. 
+
+```{r, echo=FALSE}
+na_count2 <-sapply(validation_data, function(y) sum(length(which(is.na(y))))) 
+na_count2 <- data.frame(na_count2) 
+keep_variables2 <- colSums(is.na(validation_data)) == 0
+
+na_count2$Variables <- 1:93
+perf <-ggplot(data=na_count2, aes(x=Variables, y=na_count2))+
+  geom_bar(stat="identity",fill="lightblue")+
+  scale_fill_grey() +labs(y= "Number of N/A values") 
+perf
+
+```
+
+```{r, echo=FALSE}
+data <- data[ , keep_variables2] 
+validation_data <- validation_data[ , keep_variables2]
+```
+
+After removing, these 33 variables from all data sets, 60 variables are left.
+Upon further inquiry, variables, such as 'x', 'username', 'timestamp', 
+'new_window' etc, are also removed. Finally, all data sets have 53 numeric 
+variables, which are further used to train a Random Forst model.
+
+```{r, echo=FALSE}
+data <- subset(data, select = -c(X, user_name, cvtd_timestamp, new_window, raw_timestamp_part_1, raw_timestamp_part_2)) 
+validation_data <- subset(validation_data, select = -c(X, user_name, cvtd_timestamp, new_window, raw_timestamp_part_1, raw_timestamp_part_2))
+```
+
+```{r, echo=FALSE}
+inTrain = createDataPartition(data$classe, p = 3/4)[[1]] 
+training = data[ inTrain,] 
+testing = data[-inTrain,]
+```
+
+## Random Forest
+The 'caret' library is used to fit a Random Forest model on the training data.
+The pre-processed training data with 53 variables are used to train the model, 
+along with the 10-fold Cross-Validation. The summary of the train Random Forest 
+model is shown below. The optimal model is selected based on the largest value
+of accuracy (i.e. 0.9977582).
+
+
+```{r, echo=FALSE}
+rfModel <- train(classe ~ ., data = training, method = 'rf', trControl = trainControl(method = 'cv', number = 10))
+```
+
+```{r}
+rfModel
+```
+
+The plot below illustrate the importance of top 20 variables, based on the 
+Mean Decrease Gini value.
+
+```{r, echo=FALSE}
+feature_imp <- rfModel$finalModel$importance
+feature_imp <- cbind(name = rownames(feature_imp), feature_imp)
+
+data123 <- data.frame(feature_imp)
+data123$MeanDecreaseGini <- as.numeric(data123$MeanDecreaseGini)
+
+data123[1:20, ] %>%
+  mutate(name = fct_reorder(name, MeanDecreaseGini)) %>%
+  ggplot( aes(x=name, y=MeanDecreaseGini)) +
+  geom_bar(stat="identity", fill="blue", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() 
+```
+
+The trained Random Forest model is used to predict the 'classe' variable on the
+training set (25% of the actual data, where actual 'classe' is known). The 
+summary below shows the confusion matrix (on test data set) and the prediction 
+accuracy (i.e. 0.9988). 
+
+```{r, echo=FALSE}
+pred_rf_training <- predict(rfModel, training) 
+rdAccuracu_training <- sum(training$classe == pred_rf_training)/length(pred_rf_training)
+
+pred_rf <- predict(rfModel, testing) 
+rdAccuracu_testing <- sum(testing$classe == pred_rf)/length(pred_rf)
+```
+
+
+```{r, echo=FALSE}
+caret::confusionMatrix(pred_rf, testing$classe)
+```
+## Prediction on Validation Set
+
+Finally, trained random forest model is used to predict the 'classe' variable in
+the validation. The plot below illustrate the predictions, where numbers on 
+y-axis correspond to different class (i.e. 'A', 'B', 'C', 'D' and 'E').
+```{r, echo=FALSE}
+pred_val <- predict(rfModel, validation_data) 
+
+hwplot <- plot(1:20, pred_val, xlab = "Test Case",
+     ylab = "My Prediction", col.lab = 4)
+
+grid()
+```
+
 title: "Untitled"
 output: html_document
 date: "2023-01-20"
